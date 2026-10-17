@@ -1,0 +1,10 @@
+{
+  "name": "phishing-simulation-sender",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sequential GoPhish phishing simulation launcher with Gemini decisions",
+  "main": "index.js",
+  "scripts": { "start": "node index.js", "server": "node server.js", "run-now": "node index.js --now", "poll-now": "node index.js --poll-now", "test": "node --test" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "better-sqlite3": "^11.8.1", "dotenv": "^16.4.7", "express": "^5.1.0", "node-cron": "^4.2.1", "undici": "^6.21.3" }
+}

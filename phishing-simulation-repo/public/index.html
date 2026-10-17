@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phishing Simulation Admin</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; max-width: 1200px; margin: 24px auto; padding: 0 16px; color: #222; }
+    h1, h2 { margin-bottom: 8px; }
+    section { border: 1px solid #ddd; border-radius: 6px; padding: 16px; margin: 16px 0; }
+    form { display: grid; grid-template-columns: repeat(3, minmax(140px, 1fr)); gap: 8px; align-items: end; }
+    label { display: grid; gap: 3px; font-weight: 600; }
+    input, select, button { padding: 7px; font: inherit; }
+    button { cursor: pointer; }
+    .actions { display: flex; gap: 6px; align-items: center; }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+    th, td { border: 1px solid #ddd; padding: 7px; text-align: left; vertical-align: top; }
+    th { background: #f4f4f4; }
+    .message { min-height: 20px; margin: 8px 0; }
+    .error { color: #a40000; }
+    .success { color: #176b2c; }
+    .link-button { border: 0; background: none; color: #0645ad; padding: 0; text-decoration: underline; }
+    @media (max-width: 760px) { form { grid-template-columns: 1fr; } table { font-size: 12px; display: block; overflow-x: auto; } }
+  </style>
+</head>
+<body>
+  <h1>Phishing Simulation Admin</h1>
+  <div id="message" class="message"></div>
+
+  <section>
+    <h2 id="form-title">Add employee</h2>
+    <form id="employee-form">
+      <label>Employee ID<input name="employee_id" required></label>
+      <label>Email<input name="email" type="email" required></label>
+      <label>First name<input name="first_name" required></label>
+      <label>Last name<input name="last_name" required></label>
+      <label>Position<input name="position"></label>
+      <label>Department<select name="department" required><option value="">Select department</option></select></label>
+      <div class="actions"><button type="submit" id="save-employee">Save employee</button><button type="button" id="cancel-edit" hidden>Cancel edit</button></div>
+    </form>
+  </section>
+
+  <section>
+    <h2>Employees</h2>
+    <div class="actions"><button id="launch-selected" disabled>Launch Simulation for Selected</button></div>
+    <table><thead><tr><th><input type="checkbox" id="select-all-employees" aria-label="Select all employees"></th><th>ID</th><th>Name</th><th>Email</th><th>Position</th><th>Department</th><th>Actions</th></tr></thead><tbody id="employees-body"></tbody></table>
+  </section>
+
+  <section id="launch-results" hidden>
+    <h2>Manual launch results</h2>
+    <ul id="launch-results-list"></ul>
+  </section>
+
+  <section id="pending-review" hidden>
+    <h2>Pending decisions awaiting review</h2>
+    <div class="actions"><button id="approve-all">Approve All</button></div>
+    <table><thead><tr><th>Employee ID</th><th>Employee Name</th><th>Technique</th><th>Factor</th><th>Scenario</th><th>Difficulty</th><th>Template</th><th>Reasoning</th><th>Actions</th></tr></thead><tbody id="pending-body"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Simulation history</h2>
+    <div class="actions">
+      <label>Employee <select id="history-employee"><option value="">All employees</option></select></label>
+      <label>Outcome <select id="history-outcome"><option value="">All outcomes</option><option>clicked</option><option>submitted</option><option>reported</option><option>opened</option><option>sent_no_action</option><option>unknown</option></select></label>
+      <button id="refresh-history">Refresh</button>
+      <button id="poll-now">Check for new results</button>
+      <span id="poll-summary"></span>
+    </div>
+    <table><thead><tr><th>Employee ID</th><th>Email</th><th>Factor</th><th>Difficulty</th><th>Outcome</th><th>Campaign</th><th>Last checked</th><th>Completed</th><th>Reasoning</th><th>Action</th></tr></thead><tbody id="history-body"></tbody></table>
+  </section>
+
+  <section id="detail" hidden>
+    <h2>Employee history: <span id="detail-title"></span></h2>
+    <table><thead><tr><th>Campaign</th><th>Factor</th><th>Difficulty</th><th>Outcome</th><th>Raw status</th><th>Email</th><th>Last checked</th></tr></thead><tbody id="detail-body"></tbody></table>
+  </section>
+
+  <script>
+    const $ = (selector) => document.querySelector(selector);
+    const form = $('#employee-form');
+    let editingId = null;
+    let employees = [];
+    let departments = [];
+
+    function showMessage(text, error = false) {
+      const element = $('#message');
+      element.textContent = text;
+      element.className = `message ${error ? 'error' : 'success'}`;
+    }
+
+    async function api(url, options = {}) {
+      const response = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
+      if (!response.ok) throw new Error((await response.json()).error || `Request failed (${response.status})`);
+      return response.status === 204 ? null : response.json();
+    }
+
+    function cell(value) {
+      const td = document.createElement('td');
+      td.textContent = value ?? '';
+      return td;
+    }
+
+    function renderEmployees() {
+      const body = $('#employees-body');
+      body.replaceChildren();
+      employees.forEach(employee => {
+        const row = document.createElement('tr');
+        const selectorCell = document.createElement('td');
+        const selector = document.createElement('input');
+        selector.type = 'checkbox'; selector.className = 'employee-select'; selector.value = employee.employee_id;
+        selector.setAttribute('aria-label', `Select ${employee.employee_id}`);
+        selector.onchange = updateSelectionControls;
+        selectorCell.append(selector); row.append(selectorCell);
+        const id = document.createElement('td');
+        const link = document.createElement('button');
+        link.className = 'link-button'; link.textContent = employee.employee_id;
+        link.onclick = () => showDetail(employee);
+        id.append(link); row.append(id, cell(`${employee.first_name} ${employee.last_name}`), cell(employee.email), cell(employee.position), cell(employee.department));
+        const actions = document.createElement('td');
+        const edit = document.createElement('button'); edit.textContent = 'Edit'; edit.onclick = () => startEdit(employee);
+        const remove = document.createElement('button'); remove.textContent = 'Delete'; remove.onclick = () => removeEmployee(employee);
+        actions.append(edit, remove); row.append(actions); body.append(row);
+      });
+      $('#select-all-employees').checked = false;
+      updateSelectionControls();
+      const select = $('#history-employee');
+      const current = select.value;
+      select.replaceChildren(new Option('All employees', ''));
+      employees.forEach(employee => select.add(new Option(employee.employee_id, employee.employee_id)));
+      select.value = current;
+    }
+
+    async function loadEmployees() {
+      employees = await api('/api/employees');
+      renderEmployees();
+    }
+
+    async function loadDepartments() {
+      departments = await api('/api/departments');
+      const select = form.elements.department;
+      const current = select.value;
+      select.replaceChildren(new Option('Select department', ''));
+      departments.forEach(department => select.add(new Option(department, department)));
+      if (current) select.value = current;
+    }
+
+    function updateSelectionControls() {
+      const checkboxes = [...document.querySelectorAll('.employee-select')];
+      const selected = checkboxes.filter(input => input.checked);
+      $('#launch-selected').disabled = selected.length === 0;
+      $('#select-all-employees').checked = checkboxes.length > 0 && selected.length === checkboxes.length;
+      $('#select-all-employees').indeterminate = selected.length > 0 && selected.length < checkboxes.length;
+    }
+
+    function renderLaunchResults(results) {
+      const section = $('#launch-results');
+      const list = $('#launch-results-list');
+      list.replaceChildren();
+      results.forEach(result => {
+        const item = document.createElement('li');
+        if (result.status === 'awaiting_review') {
+          item.textContent = `${result.employee_name} (${result.employee_id}): AI decision ready for review.`;
+        } else if (result.status === 'success') {
+          item.textContent = `${result.employee_name} (${result.employee_id}): success — factor ${result.factor}, difficulty ${result.difficulty}, template ${result.template_id}, campaign ${result.campaign_id}`;
+        } else {
+          item.textContent = `${result.employee_name || result.employee_id}: failed at ${result.step || 'employee pipeline'} — ${result.error}`;
+        }
+        list.append(item);
+      });
+      section.hidden = false;
+    }
+
+    async function launchSelected() {
+      const employeeIds = [...document.querySelectorAll('.employee-select:checked')].map(input => input.value);
+      if (!employeeIds.length) return showMessage('Select at least one employee first.', true);
+      const button = $('#launch-selected');
+      button.disabled = true; button.textContent = 'Launching...';
+      try {
+        const response = await api('/api/simulations/launch', { method: 'POST', body: JSON.stringify({ employee_ids: employeeIds }) });
+        renderLaunchResults(response.results);
+        const successes = response.results.filter(result => result.status === 'success').length;
+        const pending = response.results.filter(result => result.status === 'awaiting_review').length;
+        showMessage(`${pending} decision(s) ready for review${successes ? `; ${successes} succeeded` : ''}.`);
+        await loadPendingDecisions();
+      } catch (error) { showMessage(error.message, true); }
+      finally { button.textContent = 'Launch Simulation for Selected'; updateSelectionControls(); }
+    }
+
+    async function loadHistory() {
+      const params = new URLSearchParams();
+      if ($('#history-employee').value) params.set('employee_id', $('#history-employee').value);
+      if ($('#history-outcome').value) params.set('outcome', $('#history-outcome').value);
+      const rows = await api(`/api/history?${params}`);
+      const body = $('#history-body'); body.replaceChildren();
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        [row.employee_id, row.email, row.factor, row.difficulty, row.outcome, row.campaign_id, row.last_checked].forEach(value => tr.append(cell(value)));
+        tr.append(cell(row.completed ? 'Yes' : 'No'));
+        const reasoningCell = document.createElement('td');
+        if (row.reasoning) {
+          const details = document.createElement('button'); details.textContent = 'Details';
+          const text = document.createElement('div'); text.hidden = true; text.textContent = row.reasoning;
+          details.onclick = () => { text.hidden = !text.hidden; details.textContent = text.hidden ? 'Details' : 'Hide'; };
+          reasoningCell.append(details, text);
+        }
+        tr.append(reasoningCell);
+        const action = document.createElement('td');
+        const button = document.createElement('button');
+        button.textContent = row.completed ? 'Completed' : 'Mark Complete';
+        button.disabled = Boolean(row.completed);
+        if (!row.completed) button.onclick = () => markComplete(row.campaign_id);
+        action.append(button); tr.append(action); body.append(tr);
+      });
+    }
+
+    async function loadPendingDecisions() {
+      const rows = await api('/api/pending-decisions');
+      const section = $('#pending-review');
+      const body = $('#pending-body'); body.replaceChildren();
+      $('#approve-all').disabled = rows.length === 0;
+      rows.forEach(row => {
+        const decision = row.decision;
+        const tr = document.createElement('tr');
+        [row.employee_id, `${row.employee?.first_name || ''} ${row.employee?.last_name || ''}`, decision.technique, decision.factor, decision.scenario, decision.difficulty, decision.template_id, decision.reasoning].forEach(value => tr.append(cell(value)));
+        const actions = document.createElement('td');
+        const approve = document.createElement('button'); approve.textContent = 'Approve & Launch'; approve.dataset.pendingId = row.id; approve.onclick = () => approvePending(row.id);
+        const reject = document.createElement('button'); reject.textContent = 'Reject'; reject.onclick = () => rejectPending(row.id);
+        actions.append(approve, reject); tr.append(actions); body.append(tr);
+      });
+      section.hidden = rows.length === 0;
+    }
+
+    async function approvePending(id) {
+      try {
+        const result = await api(`/api/pending-decisions/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+        showMessage(`Launched campaign ${result.campaign_id} for ${result.employee_id}.`);
+        await loadPendingDecisions(); await loadHistory();
+      } catch (error) { showMessage(error.message, true); }
+    }
+
+    async function rejectPending(id) {
+      if (!confirm('Reject this pending decision? No GoPhish calls will be made.')) return;
+      try { await api(`/api/pending-decisions/${encodeURIComponent(id)}/reject`, { method: 'POST' }); showMessage('Pending decision rejected.'); await loadPendingDecisions(); }
+      catch (error) { showMessage(error.message, true); }
+    }
+
+    async function approveAll() {
+      const buttons = [...document.querySelectorAll('#pending-body button:first-child')];
+      for (const button of buttons) {
+        button.disabled = true;
+        const row = button.closest('tr');
+        const rejectButton = row.querySelector('button:nth-child(2)');
+        rejectButton.disabled = true;
+        await approvePending(button.dataset.pendingId);
+      }
+      await loadPendingDecisions();
+    }
+
+    async function pollNow() {
+      const button = $('#poll-now');
+      button.disabled = true; button.textContent = 'Checking...';
+      try {
+        const summary = await api('/api/results/poll-now', { method: 'POST' });
+        $('#poll-summary').textContent = `Checked ${summary.campaigns_checked} campaigns, logged ${summary.logged} new results.`;
+        await loadHistory();
+      } catch (error) { showMessage(error.message, true); }
+      finally { button.disabled = false; button.textContent = 'Check for new results'; }
+    }
+
+    async function markComplete(campaignId) {
+      if (!campaignId) return showMessage('This row has no campaign ID and cannot be completed.', true);
+      if (!confirm(`Mark campaign ${campaignId} complete in GoPhish?`)) return;
+      try {
+        await api(`/api/campaigns/${encodeURIComponent(campaignId)}/complete`, { method: 'POST' });
+        showMessage(`Campaign ${campaignId} marked complete.`);
+        await loadHistory();
+      } catch (error) { showMessage(error.message, true); }
+    }
+
+    function startEdit(employee) {
+      editingId = employee.employee_id; $('#form-title').textContent = 'Edit employee';
+      Object.entries(employee).forEach(([key, value]) => { if (form.elements[key]) form.elements[key].value = value || ''; });
+      $('#save-employee').textContent = 'Update employee';
+      $('#cancel-edit').hidden = false; window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function resetForm() { editingId = null; form.reset(); form.elements.department.value = ''; $('#form-title').textContent = 'Add employee'; $('#save-employee').textContent = 'Save employee'; $('#cancel-edit').hidden = true; }
+
+    async function removeEmployee(employee) {
+      if (!confirm(`Delete ${employee.employee_id}? Existing simulation history will be retained.`)) return;
+      try { await api(`/api/employees/${encodeURIComponent(employee.employee_id)}`, { method: 'DELETE' }); showMessage('Employee deleted.'); await loadEmployees(); await loadHistory(); }
+      catch (error) { showMessage(error.message, true); }
+    }
+
+    async function showDetail(employee) {
+      try {
+        const rows = await api(`/api/employees/${encodeURIComponent(employee.employee_id)}/history`);
+        $('#detail').hidden = false; $('#detail-title').textContent = employee.employee_id;
+        const body = $('#detail-body'); body.replaceChildren();
+        rows.forEach(row => { const tr = document.createElement('tr'); [row.campaign_id, row.factor, row.difficulty, row.outcome, row.raw_status, row.email, row.last_checked || row.launched_at].forEach(value => tr.append(cell(value))); body.append(tr); });
+        $('#detail').scrollIntoView({ behavior: 'smooth' });
+      } catch (error) { showMessage(error.message, true); }
+    }
+
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(form));
+      if (!data.employee_id.trim() || !data.email.trim() || !data.first_name.trim() || !data.last_name.trim()) return showMessage('Employee ID, email, first name, and last name are required.', true);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) return showMessage('Enter a valid email address.', true);
+      if (!departments.includes(data.department)) return showMessage('Select a valid department.', true);
+      try {
+        await api(editingId ? `/api/employees/${encodeURIComponent(editingId)}` : '/api/employees', { method: editingId ? 'PUT' : 'POST', body: JSON.stringify(data) });
+        showMessage(editingId ? 'Employee updated.' : 'Employee added.'); resetForm(); await loadEmployees(); await loadHistory();
+      } catch (error) { showMessage(error.message, true); }
+    };
+    $('#cancel-edit').onclick = resetForm;
+    $('#select-all-employees').onchange = (event) => {
+      document.querySelectorAll('.employee-select').forEach(input => { input.checked = event.target.checked; });
+      updateSelectionControls();
+    };
+    $('#launch-selected').onclick = () => launchSelected();
+    $('#refresh-history').onclick = () => loadHistory().catch(error => showMessage(error.message, true));
+    $('#poll-now').onclick = () => pollNow();
+    $('#approve-all').onclick = () => approveAll().catch(error => showMessage(error.message, true));
+    $('#history-employee').onchange = () => loadHistory().catch(error => showMessage(error.message, true));
+    $('#history-outcome').onchange = () => loadHistory().catch(error => showMessage(error.message, true));
+    Promise.all([loadDepartments(), loadEmployees(), loadHistory(), loadPendingDecisions()]).catch(error => showMessage(error.message, true));
+  </script>
+</body>
+</html>
