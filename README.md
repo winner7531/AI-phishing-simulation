@@ -485,7 +485,7 @@ npm test
 
 ## Testing
 
-The project uses the Node.js native test runner. Current tests cover successful Gemini decisions, Gemini retries, Ollama fallback, permanent Gemini failures, combined provider failures, structured decision parsing, and decision validation.
+The project uses the Node.js native test runner. Current tests cover successful Gemini decisions, retries for transient Gemini failures, Ollama fallback, permanent Gemini failures, and combined provider failures. Dedicated unit tests for decision parsing and validation are not yet included.
 
 ## Current Limitations
 
@@ -497,7 +497,7 @@ The project uses the Node.js native test runner. Current tests cover successful 
 - GoPhish templates, landing pages, and sending profiles must be configured separately.
 - The standalone service and admin UI run as separate Node.js processes.
 - The current automated test suite is focused mainly on the AI decision provider layer; database queries, Express routes, GoPhish integration, scheduler behavior, and end-to-end campaign/result flows do not yet have comprehensive automated coverage.
-- n8n is not part of the current runtime; the included n8n files are historical exports only.
+- n8n is not part of the current runtime; historical workflow exports are intentionally excluded from this repository.
 
 ## License
 
